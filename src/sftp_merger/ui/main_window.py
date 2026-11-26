@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import queue
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -220,7 +221,18 @@ class MainWindow(ctk.CTk):
         self._set_busy(True, "Connexion en cours…")
 
         def target(q):
-            self.client.connect(cfg.host, cfg.port, cfg.user, cfg.password)
+            def confirm_unknown_host(host, port, fingerprint):
+                answer: queue.Queue = queue.Queue()
+                q.put(("confirm", ((host, port, fingerprint), answer)))
+                return answer.get()
+
+            self.client.connect(
+                cfg.host,
+                cfg.port,
+                cfg.user,
+                cfg.password,
+                confirm_unknown_host=confirm_unknown_host,
+            )
             q.put(("progress", "Liste des fichiers…"))
             return self.client.list_files(cfg.directory)
 
@@ -230,6 +242,17 @@ class MainWindow(ctk.CTk):
             on_done=lambda files: self._on_connected(cfg, files),
             on_progress=self._set_status,
             on_error=self._on_error,
+            on_confirm=self._confirm_host,
+        )
+
+    def _confirm_host(self, data) -> bool:
+        host, port, fingerprint = data
+        return messagebox.askyesno(
+            "Hôte inconnu",
+            f"Première connexion à {host}:{port}.\n\n"
+            f"Empreinte de la clé du serveur (SHA256) :\n{fingerprint}\n\n"
+            "Faire confiance à cet hôte et l'enregistrer dans ~/.ssh/known_hosts ?",
+            icon="warning",
         )
 
     def _on_connected(self, cfg: SftpConfig, files: list[RemoteFile]) -> None:

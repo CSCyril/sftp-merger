@@ -12,6 +12,7 @@ def run_in_thread(
     on_done: Callable[[Any], None],
     on_progress: Callable[[Any], None] | None = None,
     on_error: Callable[[BaseException], None] | None = None,
+    on_confirm: Callable[[Any], bool] | None = None,
     poll_ms: int = 100,
 ) -> threading.Thread:
     q: queue.Queue = queue.Queue()
@@ -30,6 +31,9 @@ def run_in_thread(
                 if kind == "progress":
                     if on_progress is not None:
                         on_progress(payload)
+                elif kind == "confirm":
+                    data, answer_q = payload
+                    answer_q.put(on_confirm(data) if on_confirm is not None else False)
                 elif kind == "done":
                     on_done(payload)
                     return

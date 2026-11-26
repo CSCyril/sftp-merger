@@ -52,3 +52,8 @@ def test_download_utilise_le_nom_de_base(tmp_path):
 
 def test_close_sans_connexion_ne_leve_pas():
     SftpClient().close()
+
+
+def test_host_entry():
+    assert SftpClient.host_entry("srv.example.com", 22) == "srv.example.com"
+    assert SftpClient.host_entry("srv.example.com", 2222) == "[srv.example.com]:2222"

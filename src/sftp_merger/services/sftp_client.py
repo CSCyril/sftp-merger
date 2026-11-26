@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import stat
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,6 +10,10 @@ from ..models import RemoteFile
 
 if TYPE_CHECKING:
     import paramiko
+
+HostConfirmCallback = Callable[[str, int, str], bool]
+
+KNOWN_HOSTS_PATH = Path.home() / ".ssh" / "known_hosts"
 
 
 class SftpError(Exception):
@@ -25,7 +30,18 @@ class SftpClient:
     def is_connected(self) -> bool:
         return self._sftp is not None
 
-    def connect(self, host: str, port: int, user: str, password: str) -> None:
+    @staticmethod
+    def host_entry(host: str, port: int) -> str:
+        return host if port == 22 else f"[{host}]:{port}"
+
+    def connect(
+        self,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+        confirm_unknown_host: HostConfirmCallback | None = None,
+    ) -> None:
         import paramiko
 
         self.close()
@@ -40,11 +56,59 @@ class SftpClient:
                 password=password,
                 timeout=self.timeout,
             )
-        except Exception as exc:
-            ssh.close()
-            raise SftpError(str(exc)) from exc
+        except paramiko.SSHException as exc:
+            if "not found in known_hosts" not in str(exc):
+                ssh.close()
+                raise SftpError(str(exc)) from exc
+            key = self._fetch_server_key(host, port)
+            fingerprint = ":".join(f"{b:02x}" for b in key.get_fingerprint())
+            accepted = confirm_unknown_host is not None and confirm_unknown_host(
+                host, port, fingerprint
+            )
+            if not accepted:
+                ssh.close()
+                raise SftpError(
+                    f"Clé d'hôte inconnue pour {host}:{port} — connexion refusée."
+                ) from exc
+            self._persist_server_key(host, port, key)
+            ssh.get_host_keys().add(self.host_entry(host, port), key.get_name(), key)
+            try:
+                ssh.connect(
+                    hostname=host,
+                    port=port,
+                    username=user,
+                    password=password,
+                    timeout=self.timeout,
+                )
+            except Exception as retry_exc:
+                ssh.close()
+                raise SftpError(str(retry_exc)) from retry_exc
         self._ssh = ssh
         self._sftp = ssh.open_sftp()
+
+    def _fetch_server_key(self, host: str, port: int):
+        import paramiko
+
+        transport = paramiko.Transport((host, port))
+        try:
+            transport.start_client(timeout=self.timeout)
+            return transport.get_remote_server_key()
+        except Exception as exc:
+            raise SftpError(
+                f"Impossible de récupérer la clé du serveur {host}:{port} : {exc}"
+            ) from exc
+        finally:
+            transport.close()
+
+    def _persist_server_key(self, host: str, port: int, key) -> None:
+        import paramiko
+
+        host_keys = paramiko.HostKeys()
+        if KNOWN_HOSTS_PATH.exists():
+            host_keys.load(str(KNOWN_HOSTS_PATH))
+        host_keys.add(self.host_entry(host, port), key.get_name(), key)
+        KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        host_keys.save(str(KNOWN_HOSTS_PATH))
 
     def list_files(self, directory: str) -> list[RemoteFile]:
         if self._sftp is None:

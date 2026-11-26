@@ -26,6 +26,14 @@ sftp-merger
 - `mapping.csv` : correspondance `reference;titre` (séparateur `;`, encodage
   cp1252, sans ligne d'en-tête). Voir `mapping.example.csv`.
 
+## Clé d'hôte du serveur (TOFU)
+
+À la **première connexion** à un serveur, l'application affiche l'empreinte
+SHA256 de sa clé et demande confirmation. Si vous acceptez, la clé est
+enregistrée dans `~/.ssh/known_hosts` : les connexions suivantes sont
+automatiques et toute clé modifiée sera refusée (protection MITM, sans
+`AutoAddPolicy` aveugle).
+
 ## Tests
 
 ```bash
